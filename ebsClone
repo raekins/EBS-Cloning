@@ -1,0 +1,111 @@
+---
+# Summary of Steps
+# 1. Stop target application & database services (if running)
+# 2. Unmount the filesystem(s) on target server (if mounted)
+# 3. Take snapshot of the source database volume(s) on Pure
+# 4. Mount the cloned volume(s) on target server
+#
+- name: Oracle Database Refresh
+  hosts: tgtservers
+  vars_files:
+    - vars/arrays.yaml
+    - vars/database.yaml
+  collections:
+    - purestorage.flasharray
+
+taks:
+# Set Suffix
+    - set_fact:
+        suffix: "ansible{{ 1000 | random }}"
+      run_once: yes
+      
+# Setup
+    - name: Copy adcfgclone dbTier script to target EBS server
+      template: src=templates/adcfgclone_dbTier.tcl.j2 dest={{ tgt_dir }}/adcfgclone_dbTier.tcl mode=0755
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+    - name: Copy shutdown dbTier script to target EBS server
+      template: src=templates/shutdown_dbTier.sh.j2 dest={{ tgt_dir }}/shutdown_dbTier.sh mode=0755
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+    - name: Copy adcfgclone appsTier script to target EBS server
+      template: src=templates/adcfgclone_appsTier.tcl.j2 dest={{ tgt_dir }}/adcfgclone_appsTier.tcl mode=0755
+      become: yes
+      become_user: "{{ tgt_appuser }}"
+
+    - name: Copy shutdown appsTier script to target EBS server
+      template: src=templates/shutdown_appsTier.tcl.j2 dest={{ tgt_dir }}/shutdown_appsTier.tcl mode=0755
+      become: yes
+      become_user: "{{ tgt_appuser }}"
+
+# Stop AppsTier
+    - include: tasks/shutdown_appsTier.yaml
+      become: yes
+      become_user: "{{ tgt_appuser }}"
+
+# Stop dbTier
+    - include: tasks/shutdown_dbTier.yaml
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+# Create Pure session
+    - include: tasks/create_session.yaml
+      run_once: yes
+
+# Take Snapshot of EBS volumes
+    - include: tasks/take_snapshot.yaml
+      run_once: yes
+
+# Unmount Target volumes
+    - include: tasks/unmount_volume.yaml
+
+# Copy Snapshot to target database volumes
+    - include: tasks/copy_volume.yaml
+
+# Mount Target volumes
+    - include: tasks/mount_volume.yaml
+
+# Prepare env
+    - name: prepare dbTier
+      include: tasks/prepare_dbTier.yaml
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+# Prepare env
+    - name: prepare appsTier
+      include: tasks/prepare_appsTier.yaml
+      become: yes
+      become_user: "{{ tgt_appuser }}"
+
+#    - meta: end_play
+
+# Detach Oracle Home
+    - name: Detach Oracle Home
+      include: tasks/detachHome.yaml
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+# Prepare appsTier
+# Run adcfgclone dbTier
+    - name: adcfgclone dbTier
+      include: tasks/adcfgclone_dbTier.yaml
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+# Prepare dbTier env
+    - name: prepare oraInventory
+      include: tasks/prepare_dbTier2.yaml
+      become: yes
+      become_user: "{{ tgt_dbuser }}"
+
+# Run adcfgclone appsTier
+    - name: adcfgclone appsTier
+      include: tasks/adcfgclone_appsTier.yaml
+      become: yes
+      become_user: "{{ tgt_appuser }}"
+
+# Delete Snapshot of database volumes
+    - include: tasks/delete_snapshot.yaml
+      run_once: yes
